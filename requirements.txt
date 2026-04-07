@@ -2,6 +2,5 @@ Flask==3.0.0
 requests==2.31.0
 python-dotenv==1.0.0
 facebook-business==20.0.0
-python-Levenshtein==0.21.1
-fuzzywuzzy==0.18.0
+rapidfuzz==3.6.1
 gunicorn==21.2.0
