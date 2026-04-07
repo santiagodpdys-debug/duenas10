@@ -9,15 +9,10 @@ from datetime import datetime, timedelta
 from rapidfuzz import fuzz
 from rapidfuzz import process
 
-try:
-    from facebook_business.api import FacebookAdsApi
-    from facebook_business.objects import AdAccount, Campaign
-    from facebook_business.exceptions import FacebookRequestError
-except ImportError:
-    raise ImportError(
-        "La librería facebook-business no está instalada. "
-        "Ejecuta: pip install -r requirements.txt"
-    )
+from facebook_business.api import FacebookAdsApi
+from facebook_business.adobjects.adaccount import AdAccount
+from facebook_business.adobjects.campaign import Campaign
+from facebook_business.exceptions import FacebookRequestError
 
 from config import META_APP_ID, META_APP_SECRET, META_ACCESS_TOKEN, get_meta_account_id, get_all_meta_accounts
 
@@ -48,6 +43,19 @@ class MetaAdsClient:
             raise
 
     def _get_ad_account(self, account_alias: str) -> AdAccount:
+        """
+        Obtiene un objeto AdAccount de Meta.
+
+        Args:
+            account_alias: Alias de la cuenta (cp1, cp20, etc.)
+
+        Returns:
+            Objeto AdAccount
+
+        Raises:
+            ValueError: Si la cuenta no existe o no es válida
+            FacebookRequestError: Si hay error en la API
+        """
         account_id = get_meta_account_id(account_alias)
         try:
             account = AdAccount(f'act_{account_id}')
@@ -61,7 +69,19 @@ class MetaAdsClient:
                 f"Verifica el token de acceso y el ID de cuenta."
             )
 
-    def _find_campaign_by_name(self, campaigns, campaign_query: str):
+    def _find_campaign_by_name(
+        self, campaigns: List[Campaign], campaign_query: str
+    ) -> Optional[Campaign]:
+        """
+        Busca una campaña por nombre usando búsqueda fuzzy.
+
+        Args:
+            campaigns: Lista de campañas disponibles
+            campaign_query: Nombre o ID de campaña a buscar
+
+        Returns:
+            Objeto Campaign si encuentra coincidencia, None en caso contrario
+        """
         for campaign in campaigns:
             if campaign['id'] == campaign_query:
                 return campaign
@@ -76,16 +96,36 @@ class MetaAdsClient:
             scorer=fuzz.token_set_ratio
         )
 
-        if result and result[1] >= 60:
-            best_match = result[0]
+        if not result:
+            return None
+
+        best_match, score, _ = result
+
+        if score >= 60:
             for name, campaign in campaign_names:
                 if name == best_match:
-                    logger.info(f"Campaña encontrada por fuzzy match: '{best_match}' (similitud: {result[1]}%)")
+                    logger.info(
+                        f"Campaña encontrada por fuzzy match: '{best_match}' "
+                        f"(similitud: {score}%)"
+                    )
                     return campaign
 
         return None
 
     def list_campaigns(self, account_alias: str) -> List[Dict]:
+        """
+        Lista todas las campañas de una cuenta con sus estados.
+
+        Args:
+            account_alias: Alias de la cuenta (cp1, cp20, etc.)
+
+        Returns:
+            Lista de diccionarios con información de campañas
+
+        Raises:
+            ValueError: Si la cuenta no existe
+            FacebookRequestError: Si hay error en la API
+        """
         try:
             account = self._get_ad_account(account_alias)
             campaigns = account.get_campaigns(
@@ -113,9 +153,16 @@ class MetaAdsClient:
 
         except FacebookRequestError as e:
             logger.error(f"Error al listar campañas de {account_alias}: {str(e)}")
-            raise ValueError(f"Error al obtener campañas de {account_alias}: {str(e)}")
+            raise ValueError(
+                f"Error al obtener campañas de {account_alias}: {str(e)}"
+            )
 
-    def get_campaign_status(self, account_alias: str, campaign_name_or_id: str) -> Dict:
+    def get_campaign_status(
+        self, account_alias: str, campaign_name_or_id: str
+    ) -> Dict:
+        """
+        Obtiene el estado detallado de una campaña.
+        """
         try:
             campaigns = self.list_campaigns(account_alias)
             campaign = self._find_campaign_by_name(campaigns, campaign_name_or_id)
@@ -126,13 +173,19 @@ class MetaAdsClient:
                     f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}. "
                     f"Campañas disponibles: {available}..."
                 )
+
             return campaign
 
         except FacebookRequestError as e:
-            logger.error(f"Error al obtener estado de campaña {campaign_name_or_id}: {str(e)}")
+            logger.error(
+                f"Error al obtener estado de campaña {campaign_name_or_id}: {str(e)}"
+            )
             raise ValueError(f"Error al obtener estado de campaña: {str(e)}")
 
     def pause_campaign(self, account_alias: str, campaign_name_or_id: str) -> Dict:
+        """
+        Pausa una campaña.
+        """
         try:
             account = self._get_ad_account(account_alias)
             campaigns = account.get_campaigns(
@@ -141,22 +194,38 @@ class MetaAdsClient:
 
             campaign = self._find_campaign_by_name(campaigns, campaign_name_or_id)
             if not campaign:
-                raise ValueError(f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}")
+                raise ValueError(
+                    f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}"
+                )
 
             if campaign['status'] == 'PAUSED':
-                return {'id': campaign['id'], 'name': campaign.get('name'), 'status': 'PAUSED', 'message': 'La campaña ya estaba pausada'}
+                logger.info(f"Campaña {campaign['id']} ya está pausada")
+                return {
+                    'id': campaign['id'],
+                    'name': campaign.get('name'),
+                    'status': 'PAUSED',
+                    'message': 'La campaña ya estaba pausada'
+                }
 
             campaign_obj = Campaign(campaign['id'])
             campaign_obj.update({Campaign.Field.status: 'PAUSED'})
 
             logger.info(f"Campaña {campaign['id']} pausada exitosamente")
-            return {'id': campaign['id'], 'name': campaign.get('name'), 'status': 'PAUSED', 'message': 'Campaña pausada exitosamente'}
+            return {
+                'id': campaign['id'],
+                'name': campaign.get('name'),
+                'status': 'PAUSED',
+                'message': 'Campaña pausada exitosamente'
+            }
 
         except FacebookRequestError as e:
             logger.error(f"Error al pausar campaña: {str(e)}")
             raise ValueError(f"Error al pausar campaña: {str(e)}")
 
     def activate_campaign(self, account_alias: str, campaign_name_or_id: str) -> Dict:
+        """
+        Activa (reanuda) una campaña.
+        """
         try:
             account = self._get_ad_account(account_alias)
             campaigns = account.get_campaigns(
@@ -165,22 +234,44 @@ class MetaAdsClient:
 
             campaign = self._find_campaign_by_name(campaigns, campaign_name_or_id)
             if not campaign:
-                raise ValueError(f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}")
+                raise ValueError(
+                    f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}"
+                )
 
             if campaign['status'] == 'ACTIVE':
-                return {'id': campaign['id'], 'name': campaign.get('name'), 'status': 'ACTIVE', 'message': 'La campaña ya estaba activa'}
+                logger.info(f"Campaña {campaign['id']} ya está activa")
+                return {
+                    'id': campaign['id'],
+                    'name': campaign.get('name'),
+                    'status': 'ACTIVE',
+                    'message': 'La campaña ya estaba activa'
+                }
 
             campaign_obj = Campaign(campaign['id'])
             campaign_obj.update({Campaign.Field.status: 'ACTIVE'})
 
             logger.info(f"Campaña {campaign['id']} activada exitosamente")
-            return {'id': campaign['id'], 'name': campaign.get('name'), 'status': 'ACTIVE', 'message': 'Campaña activada exitosamente'}
+            return {
+                'id': campaign['id'],
+                'name': campaign.get('name'),
+                'status': 'ACTIVE',
+                'message': 'Campaña activada exitosamente'
+            }
 
         except FacebookRequestError as e:
             logger.error(f"Error al activar campaña: {str(e)}")
             raise ValueError(f"Error al activar campaña: {str(e)}")
 
-    def get_campaign_metrics(self, account_alias: str, campaign_name_or_id: str, start_date=None, end_date=None) -> Dict:
+    def get_campaign_metrics(
+        self,
+        account_alias: str,
+        campaign_name_or_id: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict:
+        """
+        Obtiene métricas de una campaña para un rango de fechas.
+        """
         try:
             if not end_date:
                 end_date = datetime.now().strftime('%Y-%m-%d')
@@ -188,21 +279,47 @@ class MetaAdsClient:
                 start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
             account = self._get_ad_account(account_alias)
-            campaigns = account.get_campaigns(fields=[Campaign.Field.id, Campaign.Field.name])
+            campaigns = account.get_campaigns(
+                fields=[Campaign.Field.id, Campaign.Field.name]
+            )
 
             campaign = self._find_campaign_by_name(campaigns, campaign_name_or_id)
             if not campaign:
-                raise ValueError(f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}")
+                raise ValueError(
+                    f"Campaña '{campaign_name_or_id}' no encontrada en {account_alias}"
+                )
 
             insights = campaign.get_insights(
-                fields=['campaign_id', 'campaign_name', 'spend', 'impressions', 'clicks', 'actions', 'action_values'],
-                params={'date_preset': 'custom', 'time_range': {'since': start_date, 'until': end_date}}
+                fields=[
+                    'campaign_id',
+                    'campaign_name',
+                    'spend',
+                    'impressions',
+                    'clicks',
+                    'actions',
+                    'action_values',
+                ],
+                params={
+                    'date_preset': 'custom',
+                    'time_range': {
+                        'since': start_date,
+                        'until': end_date,
+                    }
+                }
             )
 
             if not insights:
-                return {'id': campaign['id'], 'name': campaign.get('name'), 'period': f'{start_date} a {end_date}', 'data': None, 'message': 'No hay datos disponibles para este período'}
+                logger.warning(f"No hay datos de insights para {campaign['id']}")
+                return {
+                    'id': campaign['id'],
+                    'name': campaign.get('name'),
+                    'period': f'{start_date} a {end_date}',
+                    'data': None,
+                    'message': 'No hay datos disponibles para este período'
+                }
 
             data = insights[0]
+
             return {
                 'id': campaign['id'],
                 'name': campaign.get('name'),
@@ -222,5 +339,14 @@ class MetaAdsClient:
             raise ValueError(f"Error al obtener métricas: {str(e)}")
 
     def list_accounts(self) -> List[Dict]:
+        """
+        Lista todas las cuentas de Meta configuradas.
+        """
         accounts = get_all_meta_accounts()
-        return [{'alias': alias, 'id': account_id} for alias, account_id in accounts.items()]
+        return [
+            {
+                'alias': alias,
+                'id': account_id,
+            }
+            for alias, account_id in accounts.items()
+        ]
