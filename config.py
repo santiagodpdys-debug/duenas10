@@ -42,7 +42,7 @@ ALLOWED_PHONE_NUMBERS: List[str] = [
 # ===== FLASK CONFIGURATION =====
 FLASK_ENV = os.getenv('FLASK_ENV', 'development')
 FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-PORT = int(os.getenv('PORT', 5000))
+PORT = int(os.getenv('PORT', 10000))
 
 # ===== LOGGING CONFIGURATION =====
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
@@ -54,18 +54,6 @@ logging.basicConfig(
 )
 
 def get_meta_account_id(alias: str) -> str:
-    """
-    Obtiene el ID de cuenta de Meta por alias.
-
-    Args:
-        alias: Alias de la cuenta (cp1, cp20, cp25, cp2)
-
-    Returns:
-        ID de la cuenta de Meta
-
-    Raises:
-        ValueError: Si la cuenta no está configurada
-    """
     alias_lower = alias.lower()
     if alias_lower not in VALID_META_ACCOUNTS:
         raise ValueError(
@@ -74,36 +62,18 @@ def get_meta_account_id(alias: str) -> str:
     return VALID_META_ACCOUNTS[alias_lower]
 
 def get_all_meta_accounts() -> Dict[str, str]:
-    """
-    Retorna todas las cuentas de Meta configuradas.
-
-    Returns:
-        Diccionario con alias como clave e IDs como valor
-    """
     return VALID_META_ACCOUNTS.copy()
 
 def is_phone_allowed(phone_number: str) -> bool:
     """
     Verifica si un número de teléfono está permitido.
-
-    Args:
-        phone_number: Número de teléfono a verificar
-
-    Returns:
-        True si el número está en la lista permitida
+    Normaliza los números eliminando el '+' para comparación.
     """
-    return phone_number in ALLOWED_PHONE_NUMBERS
+    normalized = phone_number.lstrip('+')
+    allowed_normalized = [num.lstrip('+') for num in ALLOWED_PHONE_NUMBERS]
+    return normalized in allowed_normalized
 
 def validate_configuration() -> bool:
-    """
-    Valida que todas las configuraciones necesarias estén presentes.
-
-    Returns:
-        True si la configuración es válida
-
-    Raises:
-        ValueError: Si falta alguna configuración crítica
-    """
     required_vars = {
         'WhatsApp': [WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN],
         'Meta Ads': [META_ACCESS_TOKEN],
